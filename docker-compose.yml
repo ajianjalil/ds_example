@@ -1,0 +1,63 @@
+services:
+  aivs_service_triton_70:
+    depends_on:
+      - rtsp_server
+    container_name: aivs_deepstream_70_container
+    # privileged: true
+    build:
+      context: .
+      args:
+        - NODE_ENV=local
+      dockerfile: Dockerfile
+    network_mode: "host"
+    runtime: nvidia
+    shm_size: 6g
+    volumes:
+      - "./src:/opt/nvidia/deepstream/deepstream-7.0/sources/src"
+      - "/tmp/.X11-unix:/tmp/.X11-unix:rw"
+      - "//var/run/docker.sock://var/run/docker.sock"
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/sys/firmware/dmi/tables/smbios_entry_point:/sys/firmware/dmi/tables/smbios_entry_point"
+      - "/dev/mem:/dev/mem"
+      - "/dev/dri/card1:/dev/dri/card1"
+      - "./src/health_check_script.sh:/opt/nvidia/deepstream/deepstream-7.0/sources/src/health_check_script.sh"
+      - "./mp4_ingest:/mp4_ingest"
+
+    environment:
+      - USE_NEW_NVSTREAMMUX=no
+      - DISPLAY=$DISPLAY
+      - QT_X11_NO_MITSHM=1
+      - ENABLE_ALERTS=TRUE
+      - PRINT_OUT=FALSE
+      - ROOT_DIR=/workspace/SP2023/
+      - GST_DEBUG_DUMP_DOT_DIR=/opt/nvidia/deepstream/deepstream-7.0/sources/src/logs/general
+      # - GST_DEBUG=1
+      # - GST_DEBUG_LEVEL=3
+    restart: always
+    # command: ["deepstream_python_apps/apps/deepstream-demux-multi-in-multi-out/deepstream_demux_multi_in_multi_out.py","-i", "file:///opt/nvidia/deepstream/deepstream-5.1/workspace/1.mp4"]
+    # command: ["deepstream_test_3.py"]
+    command: ["wrapper.py"]
+    entrypoint: ["python3", "-u"]
+    healthcheck:
+      test: [ "CMD","sh", "-c", "/opt/nvidia/deepstream/deepstream-7.0/sources/src/health_check_script.sh" ]
+      interval: 10s
+      timeout: 10s
+      retries: 1
+      start_period: 10s
+    
+
+  rtsp_server:
+    image: bluenviron/mediamtx:1.0.2
+    network_mode: "host"
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml
+    restart: always
+
+  autoheal:
+    restart: always
+    image: willfarrell/autoheal
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=all
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      

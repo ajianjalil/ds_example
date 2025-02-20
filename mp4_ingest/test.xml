@@ -1,0 +1,14 @@
+<files>
+    <file>
+        <name>file1.mp4</name>
+        <path>/home/ajith/work/aivs_triton/mp4_ingest/file1.mp4</path>
+    </file>
+    <file>
+        <name>file2.mp4</name>
+        <path>/home/ajith/work/aivs_triton/mp4_ingest/file2.mp4</path>
+    </file>
+    <file>
+        <name>file3.mp4</name>
+        <path>/home/ajith/work/aivs_triton/mp4_ingest/file3.mp4</path>
+    </file>
+</files>
