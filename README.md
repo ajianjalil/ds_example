@@ -30,3 +30,12 @@ dot -Tpng pipeline.dot > pipeline.png
 ```
 nsys profile -w true -t cuda,nvtx,osrt,cudnn,cublas -s none -o nsight_report -f true -x true python3 wrapper.py
 ```
+
+# steps to build the system
+1. build the images
+ ```sh
+ docker-compose build
+ ```
+2. start using the terminal using start_container sh
+3. use `gst-launch-1.0 videotestsrc ! nvvideoconvert ! nvh264enc ! rtspclientsink protocls=tcp location=rtsp://localhost:554/video1` to start playing with the gstereamer
+4. please install nvtop using `sudo apt-get install -y nvtop`

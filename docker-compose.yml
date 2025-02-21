@@ -36,7 +36,7 @@ services:
     restart: always
     # command: ["deepstream_python_apps/apps/deepstream-demux-multi-in-multi-out/deepstream_demux_multi_in_multi_out.py","-i", "file:///opt/nvidia/deepstream/deepstream-5.1/workspace/1.mp4"]
     # command: ["deepstream_test_3.py"]
-    command: ["wrapper.py"]
+    command: ["driver.py"]
     entrypoint: ["python3", "-u"]
     healthcheck:
       test: [ "CMD","sh", "-c", "/opt/nvidia/deepstream/deepstream-7.0/sources/src/health_check_script.sh" ]
