@@ -1,15 +1,19 @@
 
-
-# Inorder to draw stuffs other than rects, Please follow the below link
-* https://docs.nvidia.com/metropolis/deepstream/6.1.1/dev-guide/python-api/PYTHON_API/NvDsMeta/NvDsDisplayMeta.html
-
-# inorder to install python bindingd like pyds
-* https://github.com/NVIDIA-AI-IOT/deepstream_python_apps/tree/master/bindings#31-installing-the-pip-wheel
-# Please download this file as well
+# Please download these file as well into the repo before building the services
 ```bash
 wget https://files.pythonhosted.org/packages/04/ea/49fd026ac36fdd79bf072294b139170aefc118e487ccb39af019946797e9/tensorflow-2.10.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/libcudnn8_8.1.0.77-1+cuda11.2_amd64.deb
 ```
+
+
+# steps to build the system
+1. build the images
+ ```sh
+ docker-compose build
+ ```
+2. start using the terminal using start_container sh
+3. use `gst-launch-1.0 videotestsrc ! nvvideoconvert ! nvh264enc ! rtspclientsink protocls=tcp location=rtsp://localhost:554/video1` to start playing with the gstereamer
+4. please install nvtop using `sudo apt-get install -y nvtop`
 
 * inorder to improve logging:
 ```
@@ -31,11 +35,7 @@ dot -Tpng pipeline.dot > pipeline.png
 nsys profile -w true -t cuda,nvtx,osrt,cudnn,cublas -s none -o nsight_report -f true -x true python3 wrapper.py
 ```
 
-# steps to build the system
-1. build the images
- ```sh
- docker-compose build
- ```
-2. start using the terminal using start_container sh
-3. use `gst-launch-1.0 videotestsrc ! nvvideoconvert ! nvh264enc ! rtspclientsink protocls=tcp location=rtsp://localhost:554/video1` to start playing with the gstereamer
-4. please install nvtop using `sudo apt-get install -y nvtop`
+### Notes
+1. driver_triton uses triton inference server with python backend
+2. driver uses cupy extraction of frames
+3. Expensive GPU operations are defines in model.py associated with triton and method M(), defined in driver.

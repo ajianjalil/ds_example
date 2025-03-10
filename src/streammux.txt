@@ -1,0 +1,15 @@
+[property]
+
+algorithm-type=1
+
+max-fps-control=1
+
+overall-max-fps-n=11
+
+overall-max-fps-d=1
+
+overall-min-fps-n=10
+
+overall-min-fps-d=1
+
+max-same-source-frames=1
