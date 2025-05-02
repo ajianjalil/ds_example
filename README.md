@@ -39,3 +39,9 @@ nsys profile -w true -t cuda,nvtx,osrt,cudnn,cublas -s none -o nsight_report -f 
 1. driver_triton uses triton inference server with python backend
 2. driver uses cupy extraction of frames
 3. Expensive GPU operations are defines in model.py associated with triton and method M(), defined in driver.
+
+```
+to replicate the issue
+
+python3 deepstream_test1_rtsp_in_rtsp_out.py -i file:///mp4_ingest/1.mp4 -g nvinferserver
+```
