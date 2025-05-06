@@ -67,6 +67,9 @@ pgie_classes_str= ["Vehicle", "TwoWheeler", "Person","RoadSign"]
 import numpy as np
 import time
 
+from queue import Queue
+import socket
+import pickle
 import queue
 import traceback
 import cv2
@@ -94,6 +97,75 @@ handler.setFormatter(formatter)
 FILE_LOGGER.addHandler(handler)
 
 BASE_ALARM_INDEX = 0
+
+
+
+class TCPConnectionThread(threading.Thread):
+    def __init__(self, host, port):
+        super().__init__()
+        self.host = host
+        self.port = port
+        self.queue = Queue(maxsize=100)
+        self.stop_event = threading.Event()
+        self.sock = None
+
+    def connect(self):
+        while not self.stop_event.is_set():
+            try:
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.sock.connect((self.host, self.port))
+                return True
+            except Exception as e:
+                print("From DS-7 pipeline- Error connecting:", e)
+                time.sleep(1)  # Retry after 1 second
+
+        return False
+
+    def run(self):
+        while not self.stop_event.is_set():
+            if not self.sock:
+                if not self.connect():
+                    # If unable to connect, wait before retrying
+                    time.sleep(1)
+                    continue
+
+            try:
+                while not self.stop_event.is_set():
+                    if not self.queue.empty():
+                        data = self.queue.get()
+                        # Pickle the data
+                        serialized_data = pickle.dumps(data)
+                        # Calculate the length of the data
+                        data_length = len(serialized_data)
+                        # Convert data length to bytes (4 bytes for an integer)
+                        length_bytes = data_length.to_bytes(4, byteorder='big')
+                        # Send the length of the data
+                        self.sock.sendall(length_bytes)
+                        # Send the data
+                        self.sock.sendall(serialized_data)
+                    else:
+                        time.sleep(0.1)  # Sleep briefly to avoid busy waiting
+            except Exception as e:
+                traceback.print_exc()
+                print("Error sending data:", e)
+                self.sock.close()
+                self.sock = None
+
+    def stop(self):
+        self.stop_event.set()
+        if self.sock:
+            self.sock.close()
+
+    def send_message(self, obj):
+        try:
+            self.queue.put(obj,block=False)
+        except Exception as e:
+            traceback.print_exc()
+            
+            
+
+
+
 
 class CudaArrayInterface:
     def __init__(self, ptr, shape, dtype_str):
@@ -456,7 +528,7 @@ def add_overlay_meta_to_frame(frame_object, batch_meta, frame_meta, label_names)
 
 
 
-def tiler_sink_pad_buffer_probe(pad, info, u_data):
+def tiler_sink_pad_buffer_probe(pad, info, u_data,connection_thread):
 
     global lock,condition,Counter,T000,global_overlays
     Counter=Counter+1
@@ -477,6 +549,7 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
     T0=time.time()
     # wait for lock2 for release
         # lock1 active
+    source_id_list=[]        
     while l_frame is not None:
         try:
             # Note that l_frame.data needs a cast to pyds.NvDsFrameMeta
@@ -489,30 +562,32 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
             break
 
         source_id = frame_meta.source_id
+        source_id_list.append(source_id)
+        
 
-        try:
-            # Create dummy owner object to keep memory for the image array alive
-            owner = None
-            # Getting Image data using nvbufsurface
-            # the input should be address of buffer and batch_id
-            # Retrieve dtype, shape of the array, strides, pointer to the GPU buffer, and size of the allocated memory
-            data_type, shape, strides, dataptr, size = pyds.get_nvds_buf_surface_gpu(hash(gst_buffer), frame_meta.batch_id)
-            # dataptr is of type PyCapsule -> Use ctypes to retrieve the pointer as an int to pass into cupy
-            ctypes.pythonapi.PyCapsule_GetPointer.restype = ctypes.c_void_p
-            ctypes.pythonapi.PyCapsule_GetPointer.argtypes = [ctypes.py_object, ctypes.c_char_p]
-            # Get pointer to buffer and create UnownedMemory object from the gpu buffer
-            c_data_ptr = ctypes.pythonapi.PyCapsule_GetPointer(dataptr, None)
-            unownedmem = cp.cuda.UnownedMemory(c_data_ptr, size, owner)
-            # Create MemoryPointer object from unownedmem, at index 0
-            memptr = cp.cuda.MemoryPointer(unownedmem, 0)
-            # Create cupy array to access the image data. This array is in GPU buffer
-            #X=cp.ndarray(shape=shape, dtype=data_type, memptr=memptr, strides=strides, order='C').copy()
-            #n_frame_gpu_batch[:,:,:,source_id] = X.view()
-            FOR_RAMI[source_id] = cp.ndarray(shape=shape, dtype=data_type, memptr=memptr, strides=strides, order='C').copy()[:,:,:3,cp.newaxis]
-        except:
-            FILE_LOGGER.error(f"ERROR with source_id={source_id}",exc_info=True)
-            traceback.print_exc()
-            print(f"ERROR with source_id={source_id}")
+        # try:
+        #     # Create dummy owner object to keep memory for the image array alive
+        #     owner = None
+        #     # Getting Image data using nvbufsurface
+        #     # the input should be address of buffer and batch_id
+        #     # Retrieve dtype, shape of the array, strides, pointer to the GPU buffer, and size of the allocated memory
+        #     data_type, shape, strides, dataptr, size = pyds.get_nvds_buf_surface_gpu(hash(gst_buffer), frame_meta.batch_id)
+        #     # dataptr is of type PyCapsule -> Use ctypes to retrieve the pointer as an int to pass into cupy
+        #     ctypes.pythonapi.PyCapsule_GetPointer.restype = ctypes.c_void_p
+        #     ctypes.pythonapi.PyCapsule_GetPointer.argtypes = [ctypes.py_object, ctypes.c_char_p]
+        #     # Get pointer to buffer and create UnownedMemory object from the gpu buffer
+        #     c_data_ptr = ctypes.pythonapi.PyCapsule_GetPointer(dataptr, None)
+        #     unownedmem = cp.cuda.UnownedMemory(c_data_ptr, size, owner)
+        #     # Create MemoryPointer object from unownedmem, at index 0
+        #     memptr = cp.cuda.MemoryPointer(unownedmem, 0)
+        #     # Create cupy array to access the image data. This array is in GPU buffer
+        #     #X=cp.ndarray(shape=shape, dtype=data_type, memptr=memptr, strides=strides, order='C').copy()
+        #     #n_frame_gpu_batch[:,:,:,source_id] = X.view()
+        #     FOR_RAMI[source_id] = cp.ndarray(shape=shape, dtype=data_type, memptr=memptr, strides=strides, order='C').copy()[:,:,:3,cp.newaxis]
+        # except:
+        #     FILE_LOGGER.error(f"ERROR with source_id={source_id}",exc_info=True)
+        #     traceback.print_exc()
+        #     print(f"ERROR with source_id={source_id}")
         # with stream:
         #     #n_frame_gpu[:, :, 0] = 0.5 * n_frame_gpu[:, :, 0] + 0.5
         #     n_frame_gpu_batch[300:1000,300:1000, :] =0
@@ -521,7 +596,7 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data):
             l_frame = l_frame.next
         except StopIteration:
             break
-
+    connection_thread.send_message(np.array(source_id_list))        
     return Gst.PadProbeReturn.OK
 
 # frame_duration, number_frames = 1.0 / 30 * Gst.SECOND,0
@@ -545,6 +620,7 @@ def nvdsosd_sink_pad_buffer_probe(pad, info, u_data):
     T0=time.time()
     # wait for lock2 for release
         # lock1 active
+    # source_id_list=[]
     while l_frame is not None:
         try:
             # Note that l_frame.data needs a cast to pyds.NvDsFrameMeta
@@ -556,6 +632,8 @@ def nvdsosd_sink_pad_buffer_probe(pad, info, u_data):
         except StopIteration:
             break
         frame_number = frame_meta.frame_num
+        source_id = frame_meta.source_id
+        # source_id_list.append(source_id)
         # global frame_duration
 
         # timestamp = int(frame_number * frame_duration)
@@ -756,7 +834,7 @@ def nvdsosd_sink_pad_buffer_probe(pad, info, u_data):
             l_frame = l_frame.next
         except StopIteration:
             break
-
+    
     return Gst.PadProbeReturn.OK
 
 
@@ -1210,11 +1288,18 @@ def main(args):
     # streammux.set_property('drop-pipeline-eos', "false")   
     # streammux.set_property('max-latency', 500000000)  
 
-    streammux.set_property('width', width)
-    streammux.set_property('height', height)    
-    streammux.set_property("batched-push-timeout", 40000)
-    streammux.set_property("batch-size", 30)
-    streammux.set_property('live-source', 0)
+    if os.environ["USE_NEW_NVSTREAMMUX"]=="yes":
+        streammux.set_property("config-file-path", "streammux.txt")
+        streammux.set_property("batch-size", N_Channels)
+        streammux.set_property("max-latency", 5000000)
+        
+    else:
+
+        streammux.set_property('width', width)
+        streammux.set_property('height', height)    
+        streammux.set_property("batched-push-timeout", 80000)
+        streammux.set_property("batch-size", 30)
+        streammux.set_property('live-source', 1)
     # streammux.set_property('frame-duration', 0)
     # streammux.set_property('frame-num-reset-on-eos', "true")
 
@@ -1274,17 +1359,25 @@ def main(args):
         raise RuntimeError("Unable to create queue_before_demux")
     pipeline.add(queue_before_demux)
 
+    debug_mode = False
+    host = '127.0.0.1'
+    port = 54321     
+    connection_thread = TCPConnectionThread(host, port)
+    connection_thread.start()
 
     pgie_src_pad = queue_before_demux.get_static_pad("src")
     if not pgie_src_pad:
         sys.stderr.write(" Unable to get src pad ")
     else:
-        pgie_src_pad.add_probe(Gst.PadProbeType.BUFFER, tiler_sink_pad_buffer_probe, 0)
+        pgie_src_pad.add_probe(Gst.PadProbeType.BUFFER, tiler_sink_pad_buffer_probe, 0,connection_thread)
 
     # streammux.link(nvvidconv1)
     # nvvidconv1.link(filter1)
     # filter1.link(queue_before_demux)
     # queue_before_demux.link(nvstreamdemux)
+
+
+
   
     watchdog = Gst.ElementFactory.make("watchdog", "watchdog")
     if not watchdog:
@@ -1297,7 +1390,11 @@ def main(args):
     filter1.link(watchdog)
     watchdog.link(queue_before_demux)
 
-    debug_mode = False
+    pgie = Gst.ElementFactory.make("nvinferserver", "primary-inference")
+    pgie.set_property("config-file-path","/opt/nvidia/deepstream/deepstream-7.0/sources/src/dstest1_pgie_inferserver_config_fake_1080_10.txt")
+    pipeline.add(pgie)
+    queue_before_demux.link(pgie)
+
 
     if debug_mode:
         print("Creating tiler \n ")
@@ -1343,12 +1440,14 @@ def main(args):
         sink.set_property("qos", 0)
         pipeline.add(sink)
 
-        queue_before_demux.link(tiler)
+        queue_before_demux.link(pgie)
+        pgie.link(tiler)
         tiler.link(nvvidconv)
         nvvidconv.link(nvosd)
         nvosd.link(sink)
     else:
-        queue_before_demux.link(nvstreamdemux)
+        queue_before_demux.link(pgie)
+        pgie.link(nvstreamdemux)
         #Seperate the streams from demux into multiple encoders 
         for i in range(number_sources):
             index = i+1
@@ -1519,6 +1618,11 @@ def main(args):
     FILE_LOGGER.info("Now playing...")
     FILE_LOGGER.info("Initializing GLib MainLoop")
 
+    host = '127.0.0.1'
+    port = 54321     
+    connection_thread = TCPConnectionThread(host, port)
+    connection_thread.start()
+
 
     pipeline.set_state(Gst.State.PAUSED)
     # Gst.debug_bin_to_dot_file(pipeline, Gst.DebugGraphDetails.ALL, "pipeline")
@@ -1545,12 +1649,12 @@ def main(args):
     FILE_LOGGER.info(f"Analytics status: {analytics_status}")
 
     ai_killer_event = threading.Event()
-    if analytics_status != "OFF":
-        FILE_LOGGER.info("Starting AI thread")
-        ai_thread = threading.Thread(target=M, args=(most_common_resolution, List_of_Cameras_indexes,), daemon=True)
-        ai_thread.start()
-    else:
-        FILE_LOGGER.info("AI thread not started as Analytics is OFF or not specified")
+    # if analytics_status != "OFF":
+    #     FILE_LOGGER.info("Starting AI thread")
+    #     ai_thread = threading.Thread(target=M, args=(most_common_resolution, List_of_Cameras_indexes,), daemon=True)
+    #     ai_thread.start()
+    # else:
+    #     FILE_LOGGER.info("AI thread not started as Analytics is OFF or not specified")
 
 
     
@@ -1596,6 +1700,6 @@ if __name__ == '__main__':
 
     # Master2025=Master(list(np.arange(1,11)),S1,'Thermal','Static')
     #time.sleep(5)
-    stream_paths =8*["file:///mp4_ingest/1.mp4"] + ["rtsp://192.168.31.4:8555/video1"] # simulating 10 cameras
+    stream_paths =3*["file:///mp4_ingest/1.mp4"]# simulating 10 cameras
     sys.exit(main(stream_paths))
 
