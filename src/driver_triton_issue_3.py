@@ -1032,7 +1032,7 @@ def decodebin_child_added(child_proxy,Object,name,user_data,decoder_configs):
     if(name.find("source") != -1):
         # Object.connect("child-added",sourcebin_child_added,user_data)
         if 'GstFileSrc' not in str(Object):
-            Object.set_property("latency", 400)
+            Object.set_property("latency", 0)
             Object.set_property("drop-on-latency", "true")
             Object.set_property("protocols", "tcp")
     
@@ -1663,6 +1663,6 @@ if __name__ == '__main__':
 
     # Master2025=Master(list(np.arange(1,11)),S1,'Thermal','Static')
     #time.sleep(5)
-    stream_paths =3*["file:///mp4_ingest/1.mp4"]# simulating 10 cameras
+    stream_paths =2*["rtsp://192.168.31.4:8555/video1"]# simulating 10 cameras
     sys.exit(main(stream_paths))
 

@@ -24,7 +24,7 @@ services:
       - "./mp4_ingest:/mp4_ingest"
 
     environment:
-      - USE_NEW_NVSTREAMMUX=no
+      - USE_NEW_NVSTREAMMUX=yes
       - DISPLAY=$DISPLAY
       - QT_X11_NO_MITSHM=1
       - ENABLE_ALERTS=TRUE
