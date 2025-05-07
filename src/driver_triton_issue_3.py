@@ -165,6 +165,62 @@ class TCPConnectionThread(threading.Thread):
             
 
 
+def receive_thread_loop(host, port, queue):
+    global global_overlays
+    # Create a TCP socket and listen for incoming connections
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        # Enable TCP Keep-Alive
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        # Set the idle time before sending the first keep-alive packet (in seconds)
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)  # Adjust as needed
+        # Set the interval between subsequent keep-alive packets (in seconds)
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)  # Adjust as needed
+        # Set the number of failed keep-alive probes before considering the connection dead
+        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 5)  
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # Set the reuse address option
+        s.settimeout(0.01)  # Timeout set to 10ms
+        s.bind((host, port))
+        s.listen()
+        print("Waiting for connection...")
+        while True:
+            try:
+                conn, addr = s.accept()
+                with conn:
+                    print('Connected by', addr)
+                    while True:
+                        # Receive the length of the data
+                        length_bytes = conn.recv(4)
+                        if not length_bytes:
+                            break  # If no data received, exit loop
+                        # Convert length bytes to integer
+                        data_length = int.from_bytes(length_bytes, byteorder='big')
+                        # Receive the serialized data
+                        serialized_data = b''
+                        while len(serialized_data) < data_length:
+                            packet = conn.recv(data_length - len(serialized_data))
+                            if not packet:
+                                break
+                            serialized_data += packet
+                        if len(serialized_data) != data_length:
+                            print("Incomplete data received")
+                            continue
+                        # Unpickle the object
+                        unpickled_obj = pickle.loads(serialized_data)
+                        # Put the received object into the queue
+                        # print(unpickled_obj)
+                        global_overlays = unpickled_obj
+                        # print(f"time and count from overlay={global_overlays['time']},{global_overlays['count']}")
+                        # print(global_overlays)
+                        # queue.put(unpickled_obj)
+
+            except socket.timeout:
+                print("Cleaning up...socket thread from Triton module:: Timeout while waiting for connection, ")
+                time.sleep(1)
+            except EOFError:
+                print("EOF Error")
+
+
+
 
 
 class CudaArrayInterface:
@@ -599,6 +655,9 @@ def tiler_sink_pad_buffer_probe(pad, info, u_data,connection_thread):
     connection_thread.send_message(np.array(source_id_list))        
     return Gst.PadProbeReturn.OK
 
+
+
+
 # frame_duration, number_frames = 1.0 / 30 * Gst.SECOND,0
 def nvdsosd_sink_pad_buffer_probe(pad, info, u_data):
 
@@ -620,7 +679,6 @@ def nvdsosd_sink_pad_buffer_probe(pad, info, u_data):
     T0=time.time()
     # wait for lock2 for release
         # lock1 active
-    # source_id_list=[]
     while l_frame is not None:
         try:
             # Note that l_frame.data needs a cast to pyds.NvDsFrameMeta
@@ -632,8 +690,6 @@ def nvdsosd_sink_pad_buffer_probe(pad, info, u_data):
         except StopIteration:
             break
         frame_number = frame_meta.frame_num
-        source_id = frame_meta.source_id
-        # source_id_list.append(source_id)
         # global frame_duration
 
         # timestamp = int(frame_number * frame_duration)
@@ -645,13 +701,18 @@ def nvdsosd_sink_pad_buffer_probe(pad, info, u_data):
         source_id = frame_meta.source_id
 
         # cam_idx = source_id
-        overlay_index = to_python_index(source_id)
+        # overlay_index = to_python_index(source_id)
+        # print(f"overlay_index={overlay_index} = to_python_index({source_id})")
 
         #=============start overlays=========================
         label_names=["Person","Vehicle","UnknownObject"]
         
-        if overlay_index in global_overlays:
-            polylines, rects, circles,polygons = decode_overlays(global_overlays[overlay_index])
+        if 0 in global_overlays:
+            # count = global_overlays["count"]
+            # print(f"count={count}")
+            # print(global_overlays)
+            
+            # polylines, rects, circles,polygons = decode_overlays(global_overlays[0])
             # Save the white screen image
             # if overlay_index==0:
             #     draw_overlays_on_white_screen(global_overlays[overlay_index], (1080,1920,3), f'./cvimg_with_overlay_from_deepstream/Idisp_with_overlays_{frame_number}.jpg')
@@ -668,114 +729,10 @@ def nvdsosd_sink_pad_buffer_probe(pad, info, u_data):
                     line_index2 = 0
                     circle_index = 0
 
-                    # print(f"len of polylines={len(polylines)}")
-                    # for polyline in polylines:
-                        
-                        
-                    #     sampled_points = sample_polyline_points(polyline, max_points=16,is_polygon=False)
-                    #     # sampled_points = polyline
-                    #     # print(f"size and content={sampled_points}")
-                    #     for i in range(len(sampled_points) - 1):
-                    #         x1, y1 = sampled_points[i]
-                    #         x2, y2 = sampled_points[i + 1]
-                            
-
-                    #         if line_index2 < 16:   # deepstream only supports 16 lines
-                    #             # print(f"line_index={line_index}")
-                    #             line_params2[line_index2].x1 = x1
-                    #             line_params2[line_index2].y1 = y1
-                    #             line_params2[line_index2].x2 = x2
-                    #             line_params2[line_index2].y2 = y2
-                    #             line_params2[line_index2].line_color.set(1.0, 0.0, 0.5, 1.0)  # Green color
-                    #             line_params2[line_index2].line_width = 4
-                    #             line_index2 += 1
-
-                    # Process rectangles
-                    obj_list = []
-                    for rect in rects:
-                        if len(rect) > 0:
-                            res = pyds.NvDsInferObjectDetectionInfo()
-                            # Extract bounding box information from stats
-                            rect_x1 = rect[0]
-                            rect_y1 = rect[1]
-                            x2 = rect[2]
-                            y2 = rect[3]
-                            rect_width = x2 - rect_x1
-                            rect_height = y2 - rect_y1
-                            res.left = int(rect_x1)
-                            res.top = int(rect_y1)
-                            res.width = int(rect_width)
-                            res.height = int(rect_height)
-                            obj_list.append(res)
-
-                    # for circle in circles:
-                    #     if len(circle) > 0 and circle_index < 16: # deepstream only supports 18 circles
-                    #         circle_params = display_meta.circle_params
-                    #         circle_params[circle_index].xc,circle_params[circle_index].yc = circle[0]  # X-coordinate of the circle center
-                    #         circle_params[circle_index].radius = circle[1]  # Radius of the circle
-                    #         circle_params[circle_index].circle_color.set(1.0, 1.0, 1.0, 0.5)  # Blue color with alpha
-                    #         circle_params[circle_index].bg_color.set(1.0, 1.0, 1.0, 0.2)
-                    #         circle_params[circle_index].has_bg_color = True
-                    #         circle_index += 1
-                    # display_meta.num_circles = circle_index  # Set the number of circles
-
-                    for obj in obj_list:
-                        add_overlay_meta_to_frame(obj, batch_meta, frame_meta, label_names)
-                    
-                    display_meta.num_lines = line_index
-                    display_meta.num_rects = rect_index
-                    display_meta2.num_lines = line_index2
-
-                    """#===========line, rect, arrow and text==========
-                    line_params = display_meta.line_params
-                    rect_params = display_meta.rect_params
-
-                    # Draw a line
-                    line_params[0].x1 = 50
-                    line_params[0].y1 = 50
-                    line_params[0].x2 = 300
-                    line_params[0].y2 = 300
-                    line_params[0].line_color.set(0.0, 1.0, 0.0, 0.8)  # Green color with alpha
-                    line_params[0].line_width = 4
-                    display_meta.num_lines = 1
-
-                    # Draw a rectangle
-                    rect_params[0].left = 100
-                    rect_params[0].top = 200
-                    rect_params[0].width = 150
-                    rect_params[0].height = 100
-                    rect_params[0].border_width = 5
-                    rect_params[0].border_color.set(1.0, 0.0, 0.0, 0.5)  # Red color
-                    display_meta.num_rects = 1
-
-
-                    
-
-                    # Draw a circle
-                    circle_params = display_meta.circle_params
-                    circle_params[0].xc = 400  # X-coordinate of the circle center
-                    circle_params[0].yc = 300  # Y-coordinate of the circle center
-                    circle_params[0].radius = 50  # Radius of the circle
-                    circle_params[0].circle_color.set(0.0, 0.0, 1.0, 0.5)  # Blue color with alpha
-                    display_meta.num_circles = 1  # Set the number of circles to 1        
-
-
-
-                    # Draw an arrow
-                    arrow_params = display_meta.arrow_params
-                    arrow_params[0].x1 = source_id * 250  # Starting X-coordinate
-                    arrow_params[0].y1 = 200  # Starting Y-coordinate
-                    arrow_params[0].x2 = 300  # Ending X-coordinate
-                    arrow_params[0].y2 = 400  # Ending Y-coordinate
-                    arrow_params[0].arrow_width = 5  # Width of the arrow shaft
-                    arrow_params[0].arrow_color.set(1.0, 0.5, 0.0, 0.8)  # Orange color with alpha
-                    arrow_params[0].arrow_head = pyds.NvOSD_Arrow_Head_Direction.END_HEAD  # Arrowhead at the end
-                    display_meta.num_arrows = 1  # Set the number of arrows to 1"""
-
                     display_meta.num_labels = 1  # Number of text elements
                     # Draw text
                     text_params = display_meta.text_params[0]
-                    text_params.display_text = "(*A*I*)"  # Text to display
+                    text_params.display_text = f"{global_overlays.get(0, 'none')}"  # Text to display
                     # FILE_LOGGER.info(pyds.get_string(text_params.display_text))
 
                     # Set text position
@@ -784,7 +741,7 @@ def nvdsosd_sink_pad_buffer_probe(pad, info, u_data):
 
                     # Set text font properties
                     text_params.font_params.font_name = "Serif"  # Font type
-                    text_params.font_params.font_size = 10  # Font size
+                    text_params.font_params.font_size = 20  # Font size
                     if frame_number%5 in [1,2,3]:
                         text_params.font_params.font_color.set(1.0, 1.0, 0.0, 1.0)  # Yellow color with full opacity
                     else:
@@ -834,8 +791,9 @@ def nvdsosd_sink_pad_buffer_probe(pad, info, u_data):
             l_frame = l_frame.next
         except StopIteration:
             break
-    
+
     return Gst.PadProbeReturn.OK
+
 
 
 
@@ -1225,7 +1183,7 @@ def create_source_bin(index,decoder_configs):
 
 
 def main(args):
-    global pipeline,streammux,status_queue,FOR_RAMI
+    global pipeline,streammux,status_queue,FOR_RAMI,overlay_queue
     N_Channels = len(args)
     
     global cam_idx_to_python_idx_map,cam_idx_to_source_bin_map,cam_idx_to_uri_map
@@ -1364,6 +1322,10 @@ def main(args):
     port = 54321     
     connection_thread = TCPConnectionThread(host, port)
     connection_thread.start()
+
+    receive_thread = threading.Thread(target=receive_thread_loop, args=("127.0.0.1", 9876, overlay_queue))
+    receive_thread.daemon = True
+    receive_thread.start()            
 
     pgie_src_pad = queue_before_demux.get_static_pad("src")
     if not pgie_src_pad:
@@ -1687,6 +1649,7 @@ def main(args):
 
 
 import argparse
+overlay_queue = queue.Queue(maxsize=15)
 if __name__ == '__main__':
     platform_info = PlatformInfo()
     if platform_info.is_integrated_gpu():
@@ -1700,6 +1663,6 @@ if __name__ == '__main__':
 
     # Master2025=Master(list(np.arange(1,11)),S1,'Thermal','Static')
     #time.sleep(5)
-    stream_paths =2*["rtsp://192.168.31.4:8555/video1"]# simulating 10 cameras
+    stream_paths =3*["file:///mp4_ingest/1.mp4"]# simulating 10 cameras
     sys.exit(main(stream_paths))
 
