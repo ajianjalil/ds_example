@@ -5,6 +5,9 @@ wget https://files.pythonhosted.org/packages/04/ea/49fd026ac36fdd79bf072294b1391
 wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/libcudnn8_8.1.0.77-1+cuda11.2_amd64.deb
 ```
 
+# tor replicate the issues
+1. Please use availabe rtsp_urls in the bottom of the code
+`USE_NEW_NVSTREAMMUX=no python3 driver_triton_issue_1.py`
 
 # steps to build the system
 1. build the images

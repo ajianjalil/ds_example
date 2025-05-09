@@ -1301,7 +1301,7 @@ def main(args):
     watchdog.link(queue_before_demux)
 
     pgie = Gst.ElementFactory.make("nvinferserver", "primary-inference")
-    pgie.set_property("config-file-path","/opt/nvidia/deepstream/deepstream-7.0/sources/src/dstest1_pgie_inferserver_config_fake_1080_10.txt")
+    pgie.set_property("config-file-path","/opt/nvidia/deepstream/deepstream-7.0/sources/src/dstest1_pgie_inferserver_config_fake_1080_10_expensive.txt")
     pipeline.add(pgie)
     queue_before_demux.link(pgie)
 
@@ -1606,6 +1606,6 @@ if __name__ == '__main__':
 
     # Master2025=Master(list(np.arange(1,11)),S1,'Thermal','Static')
     #time.sleep(5)
-    stream_paths =2*["file:///mp4_ingest/1.mp4"] + ["rtsp://192.168.31.4:8555/video1"] # simulating 10 cameras
+    stream_paths =1*["file:///mp4_ingest/1.mp4"] + ["rtsp://192.168.10.135:8555/video1"] # simulating 10 cameras
     sys.exit(main(stream_paths))
 
