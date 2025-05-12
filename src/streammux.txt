@@ -4,11 +4,11 @@ algorithm-type=1
 
 max-fps-control=1
 
-overall-max-fps-n=25
+overall-max-fps-n=20
 
 overall-max-fps-d=1
 
-overall-min-fps-n=25
+overall-min-fps-n=20
 
 overall-min-fps-d=1
 

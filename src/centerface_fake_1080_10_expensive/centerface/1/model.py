@@ -252,7 +252,7 @@ class TritonPythonModel:
             rects_for_all_channels = []
             batch_size = batch.shape[0]
 
-            indexes_from_pipeline = self.find_order()
+            # indexes_from_pipeline = self.find_order()
             # print(f"indexes_from_pipeline={indexes_from_pipeline}")
             # try:
             #     tiled_frame = self.generate_tiled_frame(batch_size,batch,indexes_from_pipeline)
@@ -264,13 +264,13 @@ class TritonPythonModel:
 
 
             #expensive operation
-            a = cp.random.rand(*batch.shape)
-            result = cp.einsum('ijkl,ijkl->ijkl', batch, a)
-            # Additional operations to increase GPU utilization
-            b = cp.random.rand(*batch.shape)
-            result += cp.einsum('ijkl,ijkl->ijkl', batch, b)
-            print(f"from triton={cp.sum(batch)}")
-            random_delay = cp.random.uniform(0.001, 0.02).item()
+            # a = cp.random.rand(*batch.shape)
+            # result = cp.einsum('ijkl,ijkl->ijkl', batch, a)
+            # # Additional operations to increase GPU utilization
+            # b = cp.random.rand(*batch.shape)
+            # result += cp.einsum('ijkl,ijkl->ijkl', batch, b)
+            # print(f"from triton={cp.sum(batch)}")
+            # random_delay = cp.random.uniform(0.001, 0.02).item()
 
             rects_for_all_channels = np.zeros((batch_size, 15, 4))
             stats = rects_for_all_channels.astype(np.float32)

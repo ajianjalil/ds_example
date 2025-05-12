@@ -1606,6 +1606,6 @@ if __name__ == '__main__':
 
     # Master2025=Master(list(np.arange(1,11)),S1,'Thermal','Static')
     #time.sleep(5)
-    stream_paths =1*["file:///mp4_ingest/1.mp4"] + ["rtsp://192.168.10.135:8555/video1"] # simulating 10 cameras
+    stream_paths =1*["file:///mp4_ingest/1.mp4"] + ["rtsp://192.168.31.4:8555/video1"] # simulating 10 cameras
     sys.exit(main(stream_paths))
 

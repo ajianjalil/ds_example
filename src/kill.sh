@@ -12,6 +12,9 @@ kill_processes() {
 }
 
 # Kill processes containing "driver"
+kill_processes "triton"
+
+# Kill processes containing "driver"
 kill_processes "driver"
 
 # Kill processes containing "spawn"

@@ -191,7 +191,7 @@ class TritonPythonModel:
         # rows = int(np.ceil(batch_size / 5))
         # cols = min(5, batch_size)
         frames = cp.asnumpy(frames)
-        tile_height, tile_width = 360, 640
+        tile_height, tile_width = 760, 1280
         tiled_frame = np.zeros((tile_height, tile_width , 3), dtype=np.uint8)
         #print(f"shape={frames.shape}")
         # Create a blank image for the tiled frame       
@@ -205,8 +205,8 @@ class TritonPythonModel:
                     # frame = cv2.cvtColor(frame,cv2.COLOR_RGB2BGR)
                     text = f"index:{indexes_from_pipeline[i]}"
                     font = cv2.FONT_HERSHEY_SIMPLEX
-                    font_scale = 1
-                    font_thickness = 2
+                    font_scale = 3
+                    font_thickness = 3
                     tiled.append(cv2.putText(frame.astype(np.uint8), text, (int((frame.shape[1] - cv2.getTextSize(text, font, font_scale, font_thickness)[0][0]) / 2), int((frame.shape[0] + cv2.getTextSize(text, font, font_scale, font_thickness)[0][1]) / 2)), font, font_scale, (255, 255, 255), font_thickness))
             horizontal_concatenated = cv2.hconcat(tiled)
             tiled_frame = cv2.resize(horizontal_concatenated, (tile_width, tile_height))
@@ -271,6 +271,9 @@ class TritonPythonModel:
             # result += cp.einsum('ijkl,ijkl->ijkl', batch, b)
             # print(f"from triton={cp.sum(batch)}")
             # random_delay = cp.random.uniform(0.001, 0.02).item()
+            # for i in range(50):
+            #     # time.sleep(random_delay)
+            #     a*a
 
             rects_for_all_channels = np.zeros((batch_size, 15, 4))
             stats = rects_for_all_channels.astype(np.float32)

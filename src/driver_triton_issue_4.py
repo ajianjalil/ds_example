@@ -1152,7 +1152,7 @@ if __name__ == '__main__':
 
     pgie, config, disable_probe = parse_args()
     # PLease add logging statements of the following content in the below list
-    stream_paths = ['rtsp://192.168.10.135:8555/video1','rtsp://192.168.10.135:8555/video1']
+    stream_paths = ['rtsp://192.168.31.4:8555/video1',"file:///mp4_ingest/1.mp4"] # ,"file:///mp4_ingest/1.mp4"
                     # 'rtsp://192.168.10.135:8555/video1']
     # stream_paths = ['rtsp://192.168.43.189:8555/video1',
     #                 'rtsp://192.168.43.189:8555/video1']
