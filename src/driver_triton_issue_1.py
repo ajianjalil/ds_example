@@ -64,6 +64,8 @@ pgie_classes_str= ["Vehicle", "TwoWheeler", "Person","RoadSign"]
 
 
 
+
+
 import numpy as np
 import time
 
@@ -94,6 +96,14 @@ handler.setFormatter(formatter)
 FILE_LOGGER.addHandler(handler)
 
 BASE_ALARM_INDEX = 0
+
+MODE = 0  # 1 means triton, 0 means cupy extract
+
+if os.environ["USE_NEW_NVSTREAMMUX"]=="yes":
+    MODE = 1
+else:
+    MODE = 0
+
 
 class CudaArrayInterface:
     def __init__(self, ptr, shape, dtype_str):
@@ -1051,15 +1061,15 @@ def create_source_bin(index,decoder_configs):
     if not nvvideoconvert or not videorate or not capsfilter or not nvvideoconvert2 or not capsfilter2 or not queue:
         sys.stderr.write(" Unable to create elements for source bin \n")
 
-    caps = Gst.Caps.from_string("video/x-raw(memory:NVMM),framerate=25/1")
+    caps = Gst.Caps.from_string("video/x-raw(memory:NVMM),framerate=10/1")
     capsfilter.set_property("caps", caps)
 
     caps2 = Gst.Caps.from_string("video/x-raw(memory:NVMM), format=RGBA")
     capsfilter2.set_property("caps", caps2)
 
-    videorate.set_property("max-rate", 25)
+    videorate.set_property("max-rate", 10)
     videorate.set_property("drop-only", False)
-    videorate.set_property("max-duplication-time", 20000000)
+    videorate.set_property("max-duplication-time", 80000000)
 
     # Add elements to the bin
     nbin.add(uri_decode_bin)
@@ -1191,6 +1201,7 @@ def main(args):
     # perf_data = PERF_DATA(len(args))
     number_sources = len(decoder_configs)
 
+
     # Standard GStreamer initialization
     Gst.init(None)
 
@@ -1205,18 +1216,20 @@ def main(args):
         raise RuntimeError("Unable to create NvStreamMux")
     
 
-    # streammux.set_property('sync-inputs', "true")
-    # streammux.set_property('align-inputs', "true")
-    # streammux.set_property('drop-pipeline-eos', "false")   
-    # streammux.set_property('max-latency', 500000000)  
+    if os.environ["USE_NEW_NVSTREAMMUX"]=="yes":
+        streammux.set_property("config-file-path", "streammux.txt")
+        streammux.set_property("batch-size", N_Channels)
+        streammux.set_property("max-latency", 5000000)
+        
+    else:
 
-    streammux.set_property('width', width)
-    streammux.set_property('height', height)    
-    streammux.set_property("batched-push-timeout", 40000)
-    streammux.set_property("batch-size", 30)
-    streammux.set_property('live-source', 0)
-    # streammux.set_property('frame-duration', 0)
-    # streammux.set_property('frame-num-reset-on-eos', "true")
+        streammux.set_property('width', width)
+        streammux.set_property('height', height)    
+        streammux.set_property("batched-push-timeout", 80000)
+        streammux.set_property("batch-size", 30)
+        streammux.set_property('live-source', 1)
+        # streammux.set_property('frame-duration', 0)
+        # streammux.set_property('frame-num-reset-on-eos', "true")
 
 
 
@@ -1260,13 +1273,7 @@ def main(args):
         sys.stderr.write(" Unable to create nvvidconv1 \n")
     pipeline.add(nvvidconv1)
 
-    FILE_LOGGER.info("Creating filter_RGBA \n")
-    caps1 = Gst.Caps.from_string("video/x-raw(memory:NVMM), format=RGBA")
-    filter1 = Gst.ElementFactory.make("capsfilter", "filter_RGBA")
-    if not filter1:
-        sys.stderr.write(" Unable to get the caps filter1 \n")
-    filter1.set_property("caps", caps1)
-    pipeline.add(filter1)
+
 
     FILE_LOGGER.info("Creating queue_before_demux \n")
     queue_before_demux = Gst.ElementFactory.make("queue", "queue_before_demux")
@@ -1274,252 +1281,51 @@ def main(args):
         raise RuntimeError("Unable to create queue_before_demux")
     pipeline.add(queue_before_demux)
 
-
-    pgie_src_pad = queue_before_demux.get_static_pad("src")
-    # if not pgie_src_pad:
-    #     sys.stderr.write(" Unable to get src pad ")
-    # else:
-    #     pgie_src_pad.add_probe(Gst.PadProbeType.BUFFER, tiler_sink_pad_buffer_probe, 0)
-
-    # streammux.link(nvvidconv1)
-    # nvvidconv1.link(filter1)
-    # filter1.link(queue_before_demux)
-    # queue_before_demux.link(nvstreamdemux)
-
-
-
-  
     watchdog = Gst.ElementFactory.make("watchdog", "watchdog")
     if not watchdog:
         raise RuntimeError("Unable to create watchdog element")
     watchdog.set_property("timeout", 10000) # 10 seconds of idle pipeline will restart the application
     pipeline.add(watchdog)
 
-    streammux.link(nvvidconv1)
-    nvvidconv1.link(filter1)
-    filter1.link(watchdog)
-    watchdog.link(queue_before_demux)
+    streammux.link(watchdog)
+    watchdog.link(nvvidconv1)
 
-    pgie = Gst.ElementFactory.make("nvinferserver", "primary-inference")
-    pgie.set_property("config-file-path","/opt/nvidia/deepstream/deepstream-7.0/sources/src/dstest1_pgie_inferserver_config_fake_1080_10_expensive.txt")
-    pipeline.add(pgie)
-    queue_before_demux.link(pgie)
+    # TODO
+    if True:
 
-    debug_mode = False
+        FILE_LOGGER.info("Creating filter_RGBA \n")
+        caps1 = Gst.Caps.from_string("video/x-raw(memory:NVMM), format=RGBA")
+        filter1 = Gst.ElementFactory.make("capsfilter", "filter_RGBA")
+        if not filter1:
+            sys.stderr.write(" Unable to get the caps filter1 \n")
+        filter1.set_property("caps", caps1)
 
-    if debug_mode:
-        print("Creating tiler \n ")
-        tiler = Gst.ElementFactory.make("nvmultistreamtiler", "nvtiler")
-        if not tiler:
-            sys.stderr.write(" Unable to create tiler \n")
-        tiler_rows = int(math.sqrt(number_sources))
-        tiler_columns = int(math.ceil((1.0 * number_sources) / tiler_rows))
-        tiler.set_property("rows", tiler_rows)
-        tiler.set_property("columns", tiler_columns)
-        tiler.set_property("width", TILED_OUTPUT_WIDTH)
-        tiler.set_property("height", TILED_OUTPUT_HEIGHT)
-        pipeline.add(tiler)
 
-        print("Creating nvvidconv \n ")
-        nvvidconv = Gst.ElementFactory.make("nvvideoconvert", "convertor")
-        if not nvvidconv:
-            sys.stderr.write(" Unable to create nvvidconv \n")
-        pipeline.add(nvvidconv)
+        pipeline.add(filter1)
 
-        print("Creating nvosd \n ")
-        nvosd = Gst.ElementFactory.make("nvdsosd", "onscreendisplay")
-        nvds_sink_pad = nvosd.get_static_pad("sink")
-        if not nvds_sink_pad:
-            sys.stderr.write(" Unable to get nvdsosd sink pad ")
-        else:
-            nvds_sink_pad.add_probe(Gst.PadProbeType.BUFFER, nvdsosd_sink_pad_buffer_probe, 0)
-        if not nvosd:
-            sys.stderr.write(" Unable to create nvosd \n")
-        pipeline.add(nvosd)
 
-        platform_info = PlatformInfo()
-        if platform_info.is_platform_aarch64():
-            print("Creating nv3dsink \n")
-            sink = Gst.ElementFactory.make("nv3dsink", "nv3d-sink")
-        else:
-            print("Creating EGLSink \n")
-            sink = Gst.ElementFactory.make("nveglglessink", "nvvideo-renderer")
-        if not sink:
-            sys.stderr.write(" Unable to create egl sink \n")
+        nvvidconv1.link(filter1)
+        filter1.link(queue_before_demux)
 
-        sink.set_property("sync", 1)
-        sink.set_property("qos", 0)
-        pipeline.add(sink)
+        pgie = Gst.ElementFactory.make("nvinferserver", "primary-inference")
+        pgie_sink_pad = pgie.get_static_pad("sink")
 
+
+        pgie.set_property("config-file-path", "/opt/nvidia/deepstream/deepstream-7.0/sources/src/dstest1_pgie_inferserver_config_fake_1080_10_expensive.txt")
+
+        pipeline.add(pgie)
         queue_before_demux.link(pgie)
-        pgie.link(tiler)
-        tiler.link(nvvidconv)
-        nvvidconv.link(nvosd)
-        nvosd.link(sink)
-    else:
-        queue_before_demux.link(pgie)
-        pgie.link(nvstreamdemux)
-        #Seperate the streams from demux into multiple encoders 
-        for i in range(number_sources):
-            index = i+1
-            FILE_LOGGER.info(f"Creating pipeline for stream {i} \n")
 
-            queue = Gst.ElementFactory.make("queue", f"queue_{i}")
-            if not queue:
-                raise RuntimeError(f"Unable to create queue for stream {i}")
-            pipeline.add(queue)
+        print("Creating fakesink \n ")
+        fakesink = Gst.ElementFactory.make("fakesink", "fakesink")
+        fakesink.set_property("sync", True)
+        if not fakesink:
+            sys.stderr.write(" Unable to create fakesink \n")
+        pipeline.add(fakesink)
 
-            queue1 = Gst.ElementFactory.make("queue", f"queue1_{i}")
-            queue2 = Gst.ElementFactory.make("queue", f"queue2_{i}")
-            queue3 = Gst.ElementFactory.make("queue", f"queue3_{i}")
-            queue4 = Gst.ElementFactory.make("queue", f"queue4_{i}")
-            # queue5 = Gst.ElementFactory.make("queue", f"queue5_{i}")
-            # queue6 = Gst.ElementFactory.make("queue", f"queue6_{i}")
+        pgie.link(fakesink)        
 
-            pipeline.add(queue1,queue2,queue3,queue4)
-
-
-            nvvideoconvert = Gst.ElementFactory.make("nvvideoconvert", f"nvvideoconvert_{i}")
-            if not nvvideoconvert:
-                raise RuntimeError(f"Unable to create nvvideoconvert for stream {i}")
-            pipeline.add(nvvideoconvert)
-
-            nvvideoconvert2 = Gst.ElementFactory.make("nvvideoconvert", f"nvvideoconvert2_{i}")
-            if not nvvideoconvert2:
-                raise RuntimeError(f"Unable to create nvvideoconvert for stream {i}")
-            pipeline.add(nvvideoconvert2)    
-
-            nvvideoconvert3 = Gst.ElementFactory.make("nvvideoconvert", f"nvvideoconvert3_{i}")
-            if not nvvideoconvert3:
-                raise RuntimeError(f"Unable to create nvvideoconvert for stream {i}")
-            pipeline.add(nvvideoconvert3)               
-
-            if overlay_buffer:
-                # Create and configure elements for the delay queue
-                nvvideoconvert_delay = Gst.ElementFactory.make("nvvideoconvert", f"nvvideoconvert_delay_{i}")
-                if not nvvideoconvert_delay:
-                    raise RuntimeError(f"Unable to create nvvideoconvert_delay for stream {i}")
-                pipeline.add(nvvideoconvert_delay)
-
-                videoconvert = Gst.ElementFactory.make("videoconvert", f"videoconvert_{i}")
-                if not videoconvert:
-                    raise RuntimeError(f"Unable to create videoconvert for stream {i}")
-                pipeline.add(videoconvert)
-
-                capsfilter = Gst.ElementFactory.make("capsfilter", f"capsfilter_{i}")
-                if not capsfilter:
-                    raise RuntimeError(f"Unable to create capsfilter for stream {i}")
-                capsfilter.set_property("caps", Gst.Caps.from_string("video/x-raw,format=RGBA"))
-                pipeline.add(capsfilter)
-
-                delay_queue = Gst.ElementFactory.make("queue", f"delay_queue_{i}")
-                if not delay_queue:
-                    raise RuntimeError(f"Unable to create delay_queue for stream {i}")
-                delay_queue.set_property("max-size-buffers", 10)
-                delay_queue.set_property("max-size-time", 2000000000)
-                delay_queue.set_property("max-size-bytes", 440401920)
-                delay_queue.set_property("min-threshold-time", 2000000000)
-                delay_queue.set_property("min-threshold-buffers", 8)
-                pipeline.add(delay_queue)
-
-            # encoder = Gst.ElementFactory.make("nvh264enc", f"encoder_{i}")
-            encoder = Gst.ElementFactory.make("nvh264enc", f"encoder_{i}")
-            if not encoder:
-                raise RuntimeError(f"Unable to create encoder for stream {i}")
-            # Set properties for high performance
-            encoder.set_property("bitrate", 4000)
-            encoder.set_property("max-bitrate", 5500)
-            encoder.set_property("rc-mode", 2)  # Use Constant Bitrate (CBR) mode
-            encoder.set_property("preset", 0)  # Use performance preset
-            # encoder.set_property("gop-size", 150)
-            # encoder.set_property("spatial-aq", True)
-            # encoder.set_property("temporal-aq", True)
-            # encoder.set_property("aq-strength", 8)
-            # encoder.set_property("bframes", 1)
-            # encoder.set_property("b-adapt", False)
-            # encoder.set_property("vbv-buffer-size", 500)
-            # encoder.set_property("qp-const", 30)
-            # encoder.set_property("qp-min", 25)
-            # encoder.set_property("qp-max", 40)
-            # encoder.set_property("zerolatency", True)  # Minimize latency
-            # encoder.set_property("qos", "true")
-            pipeline.add(encoder)
-
-            FILE_LOGGER.info("creating rtspclient sink")
-            rtspclientsink = Gst.ElementFactory.make("rtspclientsink", f"rtspclientsink{i}")
-            if not rtspclientsink:
-                sys.stderr.write(" Unable to create udpsink")
-            FILE_LOGGER.info(f"rtsp://127.0.0.1:554/video{i}")
-            rtspclientsink.set_property("location",f"rtsp://127.0.0.1:554/video{index}")
-            rtspclientsink.set_property("protocols","tcp")
-            pipeline.add(rtspclientsink)
-
-            padname = f"src_{index}"
-            demuxsrcpad = nvstreamdemux.get_request_pad(padname)
-            if not demuxsrcpad:
-                raise RuntimeError("Unable to create demux src pad")
-            queuesinkpad = queue.get_static_pad("sink")
-            if not queuesinkpad:
-                raise RuntimeError("Unable to create queue sink pad")
-            demuxsrcpad.link(queuesinkpad)
-
-            # creating nvosd
-            nvdsosd = make_element("nvdsosd", i)
-            pipeline.add(nvdsosd)
-            nvdsosd.set_property("process-mode", 0)
-            nvdsosd.set_property("display-text", 1)
-
-            # Link the elements
-            queue.link(nvvideoconvert)
-
-            if overlay_buffer:
-                nvvideoconvert.link(nvvideoconvert_delay)
-                nvvideoconvert_delay.link(videoconvert)
-                videoconvert.link(capsfilter)
-                capsfilter.link(delay_queue)
-                delay_queue.link(nvvideoconvert3)
-            else:
-                nvvideoconvert.link(nvvideoconvert3)
-
-            nvvideoconvert3.link(queue1)
-
-            # videorate = Gst.ElementFactory.make("videorate", f"videorate_{i}")
-            # if not videorate:
-            #     raise RuntimeError(f"Unable to create videorate for stream {i}")
-            # videorate.set_property("max-rate", 25)
-            # pipeline.add(videorate)
-
-            # FILE_LOGGER.info("Creating filter_framerate \n")
-            # caps2 = Gst.Caps.from_string("video/x-raw,framerate=25/1")
-            # filter2 = Gst.ElementFactory.make("capsfilter", f"filter_framerate_{i}")
-            # if not filter2:
-            #     sys.stderr.write(" Unable to get the caps filter2 \n")
-            # filter2.set_property("caps", caps2)
-            # pipeline.add(filter2)
-
-            # nvvideoconvert3.link(videorate)
-            # videorate.link(filter2)
-            # filter2.link(queue1)
-
-            queue1.link(nvdsosd)
-            nvdsosd.link(queue2)
-            queue2.link(nvvideoconvert2)
-            nvvideoconvert2.link(queue3)
-
-
-            nvds_sink_pad = nvdsosd.get_static_pad("sink")
-            if not nvds_sink_pad:
-                sys.stderr.write(" Unable to get nvdsosd sink pad ")
-            else:
-                nvds_sink_pad.add_probe(Gst.PadProbeType.BUFFER, nvdsosd_sink_pad_buffer_probe, i)
-
-            queue3.link(encoder)
-            encoder.link(queue4)
-            queue4.link(rtspclientsink)
-
-    # Create A diagram of our architecture 
-
-
+    
 
     loop = GLib.MainLoop()
     bus = pipeline.get_bus()
@@ -1542,7 +1348,12 @@ def main(args):
     FILE_LOGGER.info("Starting recovery thread")
 
     recovery_thread = threading.Thread(target=recovery_loop,args=(decoder_configs,),daemon=True)
-    recovery_thread.start()  
+    recovery_thread.start()
+
+    # FILE_LOGGER.info("Starting GUI status thread")
+
+    # gui_status_thread = threading.Thread(target=status_feeder,daemon=True)
+    # gui_status_thread.start()    
 
     FILE_LOGGER.info("Sleeping for 10 seconds before starting AI thread (if applicable)")
     time.sleep(2)
@@ -1551,30 +1362,17 @@ def main(args):
         FILE_LOGGER.info("Pipeline debug graph created successfully.")
     except Exception as e:
         FILE_LOGGER.error("Failed to create pipeline debug graph", exc_info=True)
-    analytics_status = True
+    analytics_status = "ON"
     FILE_LOGGER.info(f"Analytics status: {analytics_status}")
 
-    ai_killer_event = threading.Event()
-    # if analytics_status != "OFF":
-    #     FILE_LOGGER.info("Starting AI thread")
-    #     ai_thread = threading.Thread(target=M, args=(most_common_resolution, List_of_Cameras_indexes,), daemon=True)
-    #     ai_thread.start()
-    # else:
-    #     FILE_LOGGER.info("AI thread not started as Analytics is OFF or not specified")
-
-
-    
 
     main_loop_thread = threading.Thread(target=loop.run,daemon=True)
     main_loop_thread.start()
 
-
-    # recovery_thread.join()
-    # import pdb;pdb.set_trace()
     FILE_LOGGER.info("Heartbeat: monitoring application health")
 
     while True:
-        time.sleep(5)
+        time.sleep(2)
         FILE_LOGGER.info("heart beat!!")
         state_change_return, state, pending = pipeline.get_state(0)
         if recovery_thread.is_alive():
@@ -1582,14 +1380,13 @@ def main(args):
         else:
             FILE_LOGGER.warning("Recovery thread has stopped.")
         FILE_LOGGER.info(f"Pipeline state: {state}")
-        if os.path.exists(config.KILL_FILE):
+        if os.path.exists(config.TEARDOWN_FILE):
             FILE_LOGGER.info("Teardown file detected. Pausing pipeline and exiting system.")
+            FILE_LOGGER.info("Teardown file detected --> triggering restart of overlay as well")
             print(f"Bye Bye:{time.ctime()}")
-            time.sleep(50)
-            ai_killer_event.set()
             break
             # pipeline.set_state(Gst.State.PAUSED)
-            # restart_the_aivs_container(config.KILL_FILE)
+            # restart_the_aivs_container(config.KILL_FILE_AI)
 
 
 import argparse
@@ -1606,6 +1403,6 @@ if __name__ == '__main__':
 
     # Master2025=Master(list(np.arange(1,11)),S1,'Thermal','Static')
     #time.sleep(5)
-    stream_paths =1*["file:///mp4_ingest/1.mp4"] + ["rtsp://192.168.31.4:8555/video1"] # simulating 10 cameras
+    stream_paths =["rtsp://192.168.31.4:8555/video1"] + 1*["file:///mp4_ingest/1.mp4"]  # simulating 10 cameras + ["rtsp://192.168.31.4:8555/video1"]
     sys.exit(main(stream_paths))
 

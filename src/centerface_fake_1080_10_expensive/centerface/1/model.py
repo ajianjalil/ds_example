@@ -45,121 +45,6 @@ import config
 
 
 
-def receive_thread(host, port, queue):
-    # Create a TCP socket and listen for incoming connections
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        # Enable TCP Keep-Alive
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        # Set the idle time before sending the first keep-alive packet (in seconds)
-        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)  # Adjust as needed
-        # Set the interval between subsequent keep-alive packets (in seconds)
-        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)  # Adjust as needed
-        # Set the number of failed keep-alive probes before considering the connection dead
-        s.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 5)  
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # Set the reuse address option
-        s.settimeout(0.01)  # Timeout set to 10ms
-        s.bind((host, port))
-        s.listen()
-        print("Waiting for connection...")
-        while True:
-            try:
-                conn, addr = s.accept()
-                with conn:
-                    print('Connected by', addr)
-                    while True:
-                        # Receive the length of the data
-                        length_bytes = conn.recv(4)
-                        if not length_bytes:
-                            break  # If no data received, exit loop
-                        # Convert length bytes to integer
-                        data_length = int.from_bytes(length_bytes, byteorder='big')
-                        # Receive the serialized data
-                        serialized_data = b''
-                        while len(serialized_data) < data_length:
-                            packet = conn.recv(data_length - len(serialized_data))
-                            if not packet:
-                                break
-                            serialized_data += packet
-                        if len(serialized_data) != data_length:
-                            print("Incomplete data received")
-                            continue
-                        # Unpickle the object
-                        unpickled_obj = pickle.loads(serialized_data)
-                        # Put the received object into the queue
-                        # print(unpickled_obj)
-                        queue.put(unpickled_obj)
-
-            except socket.timeout:
-                print("Cleaning up...socket thread from Triton module:: Timeout while waiting for connection, ")
-                time.sleep(1)
-            except EOFError:
-                print("EOF Error")
-
-
-
-
-
-class TCPConnectionThread(threading.Thread):
-    def __init__(self, host, port):
-        super().__init__()
-        self.host = host
-        self.port = port
-        self.queue = queue.Queue(maxsize=100)
-        self.stop_event = threading.Event()
-        self.sock = None
-
-    def connect(self):
-        while not self.stop_event.is_set():
-            try:
-                self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.sock.connect((self.host, self.port))
-                return True
-            except Exception as e:
-                print("From DS-7 Triton inference server-Error connecting:", e)
-                time.sleep(1)  # Retry after 1 second
-
-        return False
-
-    def run(self):
-        while not self.stop_event.is_set():
-            if not self.sock:
-                if not self.connect():
-                    # If unable to connect, wait before retrying
-                    time.sleep(1)
-                    continue
-
-            try:
-                while not self.stop_event.is_set():
-                    if not self.queue.empty():
-                        data = self.queue.get()
-                        # Pickle the data
-                        serialized_data = pickle.dumps(data)
-                        # Calculate the length of the data
-                        data_length = len(serialized_data)
-                        # Convert data length to bytes (4 bytes for an integer)
-                        length_bytes = data_length.to_bytes(4, byteorder='big')
-                        # Send the length of the data
-                        self.sock.sendall(length_bytes)
-                        # Send the data
-                        self.sock.sendall(serialized_data)
-                    else:
-                        time.sleep(0.1)  # Sleep briefly to avoid busy waiting
-            except Exception as e:
-                print("Error sending data:", e)
-                self.sock.close()
-                self.sock = None
-
-    def stop(self):
-        self.stop_event.set()
-        if self.sock:
-            self.sock.close()
-
-    def send_message(self, obj):
-        try:
-            self.queue.put(obj,block=False)
-        except Exception as e:
-            pass
-            # print(e)
 
 class TritonPythonModel:
     """Your Python model must use the same class name. Every Python model
@@ -174,44 +59,65 @@ class TritonPythonModel:
         the model to initialize any state associated with this model.
         """
         self.source_id_q = Queue(maxsize=100)
-        self.receive_thread = threading.Thread(target=receive_thread, args=("127.0.0.1", 54321, self.source_id_q))
-        self.receive_thread.start()
-        self.indexes_from_pipeline = []
+        # CUDA kernel that hogs GPU
+        kernel_code = r'''
+        extern "C" __global__
+        void high_load_kernel(float* out, int iterations) {
+            int idx = threadIdx.x + blockIdx.x * blockDim.x;
+            float val = 0.0f;
 
-    def find_order(self):
+            for (int i = 0; i < iterations; ++i) {
+                val += sinf(i * 0.0001f) * cosf(i * 0.00005f);
+            }
+
+            out[idx] = val;
+        }
+        '''
+
+        # Compile kernel once
+        module = cp.RawModule(code=kernel_code)
+        self.kernel = module.get_function('high_load_kernel')
+
+        threading.Thread(target=self.expensive_thread, daemon=True).start()
+
+
+
+    def expensive_thread(self):
+        # Simulation parameters
+        NUM_THREADS = 1024 * 1024   # 1 million
+        ITERATIONS = 10000         # simulate expensive computation
+        BLOCK_SIZE = 256
+        GRID_SIZE = (NUM_THREADS + BLOCK_SIZE - 1) // BLOCK_SIZE
+        TARGET_FPS = 25
+        FRAME_INTERVAL = 1.0 / TARGET_FPS
+
+        # Allocate output buffer
+        output = cp.zeros(NUM_THREADS, dtype=cp.float32)
+
+        print("Starting GPU overload simulation at 25 FPS...")
         try:
-            self.indexes_from_pipeline = self.source_id_q.get(block=False)
-            # print(f"source_id list from model = {indexes_from_pipeline}")
+            while True:
+                start_time = time.time()
+
+                # Launch synthetic high-load kernel
+                self.kernel((GRID_SIZE,), (BLOCK_SIZE,), (output, cp.int32(ITERATIONS)))
+                cp.cuda.Device().synchronize()
+
+                # Enforce real-time frame pacing
+                elapsed = time.time() - start_time
+                sleep_time = max(0, FRAME_INTERVAL - elapsed)
+                random_delay = cp.random.uniform(0.02, 0.03).item()
+                time.sleep(random_delay)
+
+                print(f"Frame done in {elapsed:.3f} s | sleeping {sleep_time:.3f} s")
+
         except:
-            print("index list from pipeline to triton is delayed, please wait")
+            print("❎ Simulation stopped.")
             traceback.print_exc()
-        return self.indexes_from_pipeline
 
-    def generate_tiled_frame(self, batch_size, frames,indexes_from_pipeline):
-        # rows = int(np.ceil(batch_size / 5))
-        # cols = min(5, batch_size)
-        frames = cp.asnumpy(frames)
-        tile_height, tile_width = 360, 640
-        tiled_frame = np.zeros((tile_height, tile_width , 3), dtype=np.uint8)
-        #print(f"shape={frames.shape}")
-        # Create a blank image for the tiled frame       
-        tiled = []
-        if batch_size==len(indexes_from_pipeline): #sometime it wont be equal, then skip
-            for i in range(batch_size):
-                frame = frames[i]
-                if frame is not None:
-                    # Resize the frame to fit the tile size
-                    # frame = np.transpose(frame, (1, 2, 0))
-                    # frame = cv2.cvtColor(frame,cv2.COLOR_RGB2BGR)
-                    text = f"index:{indexes_from_pipeline[i]}"
-                    font = cv2.FONT_HERSHEY_SIMPLEX
-                    font_scale = 1
-                    font_thickness = 2
-                    tiled.append(cv2.putText(frame.astype(np.uint8), text, (int((frame.shape[1] - cv2.getTextSize(text, font, font_scale, font_thickness)[0][0]) / 2), int((frame.shape[0] + cv2.getTextSize(text, font, font_scale, font_thickness)[0][1]) / 2)), font, font_scale, (255, 255, 255), font_thickness))
-            horizontal_concatenated = cv2.hconcat(tiled)
-            tiled_frame = cv2.resize(horizontal_concatenated, (tile_width, tile_height))
 
-        return tiled_frame   
+
+
 
     def execute(self, requests):
 
@@ -254,23 +160,14 @@ class TritonPythonModel:
 
             # indexes_from_pipeline = self.find_order()
             # print(f"indexes_from_pipeline={indexes_from_pipeline}")
-            # try:
-            #     tiled_frame = self.generate_tiled_frame(batch_size,batch,indexes_from_pipeline)
-            #     cv2.imshow("Tiler Debug Window from Triton", tiled_frame)
-            #     key = cv2.waitKey(1)
-            # except Exception as e:
-            #     print("Exception occurred")
-            #     traceback.print_exc()         
+            try:
 
+                cv2.imshow("Tiler Debug Window from Triton", cp.asnumpy(batch[0]).astype(np.uint8))
+                key = cv2.waitKey(1)
+            except Exception as e:
+                print("Exception occurred")
+                traceback.print_exc()         
 
-            #expensive operation
-            # a = cp.random.rand(*batch.shape)
-            # result = cp.einsum('ijkl,ijkl->ijkl', batch, a)
-            # # Additional operations to increase GPU utilization
-            # b = cp.random.rand(*batch.shape)
-            # result += cp.einsum('ijkl,ijkl->ijkl', batch, b)
-            # print(f"from triton={cp.sum(batch)}")
-            # random_delay = cp.random.uniform(0.001, 0.02).item()
 
             rects_for_all_channels = np.zeros((batch_size, 15, 4))
             stats = rects_for_all_channels.astype(np.float32)
