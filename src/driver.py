@@ -260,49 +260,95 @@ def M(most_common_resolution,List_of_Cameras_indexes):
     NUM = len(List_of_Cameras_indexes)
     width,height = most_common_resolution
     Batch=cp.zeros((height,width,3,NUM))
-    while True:       
-        for python_idx in range(0,NUM):
-            Batch[:,:,:,python_idx:(python_idx+1)]=FOR_RAMI[to_cam_index(List_of_Cameras_indexes,python_idx)]
+    kernel_code = r'''
+    extern "C" __global__
+    void high_load_kernel(float* out, int iterations) {
+        int idx = threadIdx.x + blockIdx.x * blockDim.x;
+        float val = 0.0f;
 
-            # Extract a single frame from the batch for processing
-            frame = Batch[:, :, :, python_idx].copy()
-            # Perform operations on the single frame if needed
-            frame = frame.astype(cp.uint8)
-            # Create GpuMat from CuPy array using zero-copy
-            gpu_frame = cv_cuda_gpumat_from_cp_array(frame)
-            gpu_gray = cv2.cuda.cvtColor(gpu_frame, cv2.COLOR_RGB2GRAY)
+        for (int i = 0; i < iterations; ++i) {
+            val += sinf(i * 0.0001f) * cosf(i * 0.00005f);
+        }
 
-            # # Apply Gaussian blur on GPU
-            gaussian_filter = cv2.cuda.createGaussianFilter(gpu_gray.type(), gpu_gray.type(), (31, 31), 0)
-            gpu_blurred = gaussian_filter.apply(gpu_gray)
+        out[idx] = val;
+    }
+    '''
 
-            # Apply thresholding on the blurred image
-            _, gpu_thresh = cv2.cuda.threshold(gpu_blurred, 127, 255, cv2.THRESH_BINARY)
+    # Compile kernel once
+    module = cp.RawModule(code=kernel_code)
+    kernel = module.get_function('high_load_kernel')
+
+    # Simulation parameters
+    NUM_THREADS = 1024 * 1024   # 1 million
+    ITERATIONS = 10000         # simulate expensive computation
+    BLOCK_SIZE = 256
+    GRID_SIZE = (NUM_THREADS + BLOCK_SIZE - 1) // BLOCK_SIZE
+    TARGET_FPS = 25
+    FRAME_INTERVAL = 1.0 / TARGET_FPS
+
+    output = cp.zeros(NUM_THREADS, dtype=cp.float32)
+
+    while True:
+        start_time = time.time()
+
+        # Launch synthetic high-load kernel
+        kernel((GRID_SIZE,), (BLOCK_SIZE,), (output, cp.int32(ITERATIONS)))
+        cp.cuda.Device().synchronize()
+
+        # Enforce real-time frame pacing
+        elapsed = time.time() - start_time
+        sleep_time = max(0, FRAME_INTERVAL - elapsed)
+
+        random_delay = cp.random.uniform(0.02, 0.03).item()
+        time.sleep(random_delay)
+
+        # time.sleep(sleep_time)
+
+        print(f"Frame done in {elapsed:.3f} s | sleeping {random_delay:.3f} s")
+
+    # while True:       
+    #     for python_idx in range(0,NUM):
+    #         Batch[:,:,:,python_idx:(python_idx+1)]=FOR_RAMI[to_cam_index(List_of_Cameras_indexes,python_idx)]
+
+    #         # Extract a single frame from the batch for processing
+    #         frame = Batch[:, :, :, python_idx].copy()
+    #         # Perform operations on the single frame if needed
+    #         frame = frame.astype(cp.uint8)
+    #         # Create GpuMat from CuPy array using zero-copy
+    #         gpu_frame = cv_cuda_gpumat_from_cp_array(frame)
+    #         gpu_gray = cv2.cuda.cvtColor(gpu_frame, cv2.COLOR_RGB2GRAY)
+
+    #         # # Apply Gaussian blur on GPU
+    #         gaussian_filter = cv2.cuda.createGaussianFilter(gpu_gray.type(), gpu_gray.type(), (31, 31), 0)
+    #         gpu_blurred = gaussian_filter.apply(gpu_gray)
+
+    #         # Apply thresholding on the blurred image
+    #         _, gpu_thresh = cv2.cuda.threshold(gpu_blurred, 127, 255, cv2.THRESH_BINARY)
 
 
-            # Apply connected components on GPU
-            labels = cv2.cuda.connectedComponents(gpu_thresh)
-            labels_cp = cp_array_from_cv_cuda_gpumat(labels)
+    #         # Apply connected components on GPU
+    #         labels = cv2.cuda.connectedComponents(gpu_thresh)
+    #         labels_cp = cp_array_from_cv_cuda_gpumat(labels)
 
 
-            num_labels = int(cp.asnumpy(labels_cp.max()))
-            unique_labels = cp.unique(labels_cp)
-            num_labels = len(unique_labels)
+    #         num_labels = int(cp.asnumpy(labels_cp.max()))
+    #         unique_labels = cp.unique(labels_cp)
+    #         num_labels = len(unique_labels)
             
-            # Generate random colors for each label
-            label_colors = cp.random.randint(0, 256, (num_labels, 3), dtype=cp.uint8)
+    #         # Generate random colors for each label
+    #         label_colors = cp.random.randint(0, 256, (num_labels, 3), dtype=cp.uint8)
             
-            # Create a color image based on the labels and colors
-            color_image = label_colors[labels_cp.get()].reshape(labels_cp.shape + (3,))
-            # Simulate high GPU usage by performing a large matrix multiplication
-            a = cp.random.rand(*Batch.shape)
-            result = cp.einsum('ijkl,ijkl->ijkl', Batch, a)
-            # Additional operations to increase GPU utilization
-            b = cp.random.rand(*Batch.shape)
-            result += cp.einsum('ijkl,ijkl->ijkl', Batch, b)
-            print(cp.sum(Batch))
-            random_delay = cp.random.uniform(0.001, 0.02).item()
-            time.sleep(random_delay)
+    #         # Create a color image based on the labels and colors
+    #         color_image = label_colors[labels_cp.get()].reshape(labels_cp.shape + (3,))
+    #         # Simulate high GPU usage by performing a large matrix multiplication
+    #         a = cp.random.rand(*Batch.shape)
+    #         result = cp.einsum('ijkl,ijkl->ijkl', Batch, a)
+    #         # Additional operations to increase GPU utilization
+    #         b = cp.random.rand(*Batch.shape)
+    #         result += cp.einsum('ijkl,ijkl->ijkl', Batch, b)
+    #         print(cp.sum(Batch))
+    #         random_delay = cp.random.uniform(0.001, 0.02).item()
+            # time.sleep(random_delay)
         # print("Batch shape",Batch.shape)
             
 
@@ -1596,6 +1642,6 @@ if __name__ == '__main__':
 
     # Master2025=Master(list(np.arange(1,11)),S1,'Thermal','Static')
     #time.sleep(5)
-    stream_paths =8*["file:///mp4_ingest/1.mp4"] + ["rtsp://192.168.31.4:8555/video1"] # simulating 10 cameras
+    stream_paths =7*["file:///mp4_ingest/1.mp4"] + ["rtsp://192.168.31.4:8555/video1"] # simulating 10 cameras
     sys.exit(main(stream_paths))
 
